@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::convert::TryInto;
 use std::io::Cursor;
 use std::{collections::HashMap, path::Path};
@@ -6,9 +7,11 @@ use anvil_region::{
     position::RegionPosition,
     provider::{FolderRegionProvider, RegionProvider},
 };
-use bitstream_io::{BigEndian, BitRead, BitReader};
+use bitstream_io::{BitRead, BitReader, LittleEndian};
 use clap::{App, Arg};
 use nbt::CompoundTag;
+
+type Layer = HashMap<String, u32>;
 
 fn parse_palette_entry(palette_entry: &CompoundTag) -> &str {
     palette_entry
@@ -16,37 +19,39 @@ fn parse_palette_entry(palette_entry: &CompoundTag) -> &str {
         .expect("Couldn't get field Name for palette entry")
 }
 
-fn parse_blockstate(palette: &[&str], id: usize, blockstate_map: &mut HashMap<String, u32>) {
-    let blockstate_name = *palette
-        .get(id)
-        .unwrap_or_else(|| panic!("blockstate index {} out of bounds", id));
+fn parse_blockstate(block: &str, blockstate_map: &mut HashMap<String, u32>, layer: &mut Layer) {
+    let prev_blockstate_count = *blockstate_map.get(&block.to_string()).unwrap_or(&0);
+    blockstate_map.insert(block.to_string(), prev_blockstate_count + 1);
 
-    let prev_blockstate_count = *blockstate_map
-        .get(&blockstate_name.to_string())
-        .unwrap_or(&0);
-    blockstate_map.insert(blockstate_name.to_string(), prev_blockstate_count + 1);
+    let prev_blockstate_count = *layer.get(&block.to_string()).unwrap_or(&0);
+    layer.insert(block.to_string(), prev_blockstate_count + 1);
 }
 
-fn change_array_element_size(blockstates: &[i64], palette_length: usize) -> Vec<usize> {
-    let palette_length: i32 = palette_length.try_into().unwrap();
-    let width: u32 = f64::log2(palette_length.into()) as u32;
+fn get_blocks_in_chunk_by_id<'a>(palette: &[&'a str], blockstates: &[i64]) -> Vec<&'a str> {
+    let palette_length: i32 = palette.len().try_into().unwrap();
+    let width: u32 = max(4, f64::log2(palette_length.into()).ceil() as u32);
 
-    let blockstate_bytes: Vec<u8> = blockstates
-        .iter()
-        .flat_map(|&val| Vec::from(val.to_le_bytes()))
-        .collect();
+    let mut result: Vec<&str> = vec![];
 
-    let cursor = Cursor::new(blockstate_bytes.as_slice());
-    let mut reader = BitReader::endian(cursor, BigEndian);
+    for blockstate in blockstates {
+        let bytes = blockstate.to_le_bytes();
+        let cursor = Cursor::new(bytes);
+        let mut reader = BitReader::endian(cursor, LittleEndian);
 
-    let mut result: Vec<usize> = vec![];
-
-    for _x in 0..16 {
-        for _y in 0..16 {
-            for _z in 0..16 {
-                let val = reader.read::<u64>(width).unwrap();
-                result.push(val as usize);
+        while let Ok(value) = reader.read::<u64>(width) {
+            if result.len() == 16 * 16 * 16 {
+                return result;
             }
+
+            let index = value as usize;
+            if index >= palette.len() {
+                panic!(
+                    "Palette index out of bounds: {} (palette size {})",
+                    index,
+                    palette.len()
+                );
+            }
+            result.push(palette[index]);
         }
     }
 
@@ -57,30 +62,62 @@ fn iter_blocks_in_section(
     palette: &[&str],
     chunk_section: &CompoundTag,
     blockstate_map: &mut HashMap<String, u32>,
+    section_layers: &mut [Layer],
 ) {
     let block_states = chunk_section.get_i64_vec("BlockStates");
 
     if let Ok(block_states) = block_states {
-        let indices = change_array_element_size(block_states, palette.len());
+        let blocks = get_blocks_in_chunk_by_id(palette, block_states);
 
         for x in 0..16 {
-            for y in 0..16 {
-                for z in 0..16 {
+            for z in 0..16 {
+                for (y, layer) in section_layers.iter_mut().enumerate() {
                     let block_pos = y * 16 * 16 + z * 16 + x;
-                    parse_blockstate(palette, indices[block_pos], blockstate_map);
+                    parse_blockstate(blocks[block_pos], blockstate_map, layer);
                 }
             }
         }
     }
 }
 
-fn parse_chunk_section(chunk_section: &CompoundTag, blockstate_map: &mut HashMap<String, u32>) {
-    let palette: Vec<&str> = chunk_section
+fn parse_chunk_section(
+    chunk_section: &CompoundTag,
+    blockstate_map: &mut HashMap<String, u32>,
+    layers: &mut [Layer],
+) {
+    let section_y = chunk_section.get_i8("Y");
+
+    // This section is empty
+    if section_y.is_err() {
+        return;
+    }
+
+    let section_y = section_y.unwrap();
+    if section_y < 0 {
+        return;
+    }
+
+    let section_y = section_y as usize;
+
+    const SECTION_HEIGHT: usize = 16;
+    let section_bottom_layer: usize = section_y * SECTION_HEIGHT;
+
+    let section_y_range = section_bottom_layer..(section_bottom_layer + SECTION_HEIGHT);
+
+    let section_layers = &mut layers[section_y_range];
+
+    let mut palette: Vec<&str> = chunk_section
         .get_compound_tag_vec("Palette")
         .unwrap_or_default()
         .into_iter()
         .map(|entry| parse_palette_entry(entry))
         .collect();
+
+    if palette.get(0) != Some(&"minecraft:air") {
+        let mut old_palette = palette;
+        palette = vec!["minecraft:air"];
+        palette.append(&mut old_palette);
+    }
 
     let result = chunk_section.get_i64_vec("BlockStates");
 
@@ -92,7 +129,7 @@ fn parse_chunk_section(chunk_section: &CompoundTag, blockstate_map: &mut HashMap
             }
         }
     } else {
-        iter_blocks_in_section(&palette, chunk_section, blockstate_map);
+        iter_blocks_in_section(&palette, chunk_section, blockstate_map, section_layers);
     }
 }
 
@@ -142,6 +179,7 @@ fn main() {
         .expect("Not a valid region file");
 
     let mut blockstate_map = HashMap::<String, u32>::new();
+    let mut layers = vec![Layer::new(); 256];
 
     for chunk in region {
         let level = chunk
@@ -157,14 +195,46 @@ fn main() {
         eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
 
         for section in chunk_sections.into_iter() {
-            parse_chunk_section(section, &mut blockstate_map);
+            parse_chunk_section(section, &mut blockstate_map, &mut layers);
         }
     }
 
-    let mut blockstate_list: Vec<(String, u32)> = blockstate_map.into_iter().collect();
+    let mut blockstate_list: Vec<(String, u32)> = blockstate_map
+        .iter()
+        .map(|(block_id, count)| (block_id.clone(), *count))
+        .collect();
     blockstate_list.sort_by(|(_, a), (_, b)| a.cmp(b));
 
     for (blockstate, count) in blockstate_list {
         println!("{:6} {}", count, blockstate);
     }
+
+    println!("\nDiamonds:");
+
+    for (y, layer) in layers.into_iter().enumerate() {
+        let diamond_count = layer.get("minecraft:diamond_ore").cloned().unwrap_or(0);
+        let deepslate_diamond_count = layer
+            .get("minecraft:deepslate_diamond_ore")
+            .cloned()
+            .unwrap_or(0);
+        let total_diamond_count = diamond_count + deepslate_diamond_count;
+
+        let diamonds_string = format!("{:6}", total_diamond_count);
+
+        println!("{:3} {}", y, diamonds_string);
+    }
+
+    let diamond_count = blockstate_map
+        .get("minecraft:diamond_ore")
+        .cloned()
+        .unwrap_or(0);
+    let deepslate_diamond_count = blockstate_map
+        .get("minecraft:deepslate_diamond_ore")
+        .cloned()
+        .unwrap_or(0);
+    let total_diamond_count = diamond_count + deepslate_diamond_count;
+
+    let diamonds_string = format!("{:6}", total_diamond_count);
+
+    println!("\ntotal: {}", diamonds_string);
 }
