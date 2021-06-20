@@ -3,6 +3,7 @@ use std::convert::TryInto;
 use std::io::Cursor;
 use std::{collections::HashMap, path::Path};
 
+use anvil_region::position::RegionChunkPosition;
 use anvil_region::{
     position::RegionPosition,
     provider::{FolderRegionProvider, RegionProvider},
@@ -171,31 +172,34 @@ fn main() {
         None
     };
 
-    let provider = FolderRegionProvider::new(input_path.to_str().unwrap());
-
-    let region_pos = RegionPosition::from_chunk_position(0, 0);
-    let region = provider
-        .get_region(region_pos)
-        .expect("Not a valid region file");
+    let region_provider = FolderRegionProvider::new(input_path.to_str().unwrap());
 
     let mut blockstate_map = HashMap::<String, u32>::new();
     let mut layers = vec![Layer::new(); 256];
 
-    for chunk in region {
-        let level = chunk
-            .get_compound_tag("Level")
-            .expect("Level doesn't exist");
-        let chunk_sections = level
-            .get_compound_tag_vec("Sections")
-            .expect("Sections couldn't be parsed");
+    for chunk_x in 0..128 {
+        for chunk_z in 0..128 {
+            let chunk_pos = RegionChunkPosition::from_chunk_position(chunk_x, chunk_z);
+            let mut region = region_provider
+                .get_region(RegionPosition::from_chunk_position(chunk_x, chunk_z))
+                .expect("Could not load chunk file");
+            let chunk = region.read_chunk(chunk_pos).expect("could not read chunk");
 
-        let chunk_x = level.get_i32("xPos").expect("xPos couldn't be parsed");
-        let chunk_z = level.get_i32("zPos").expect("zPos couldn't be parsed");
+            let level = chunk
+                .get_compound_tag("Level")
+                .expect("Level doesn't exist");
+            let chunk_sections = level
+                .get_compound_tag_vec("Sections")
+                .expect("Sections couldn't be parsed");
 
-        eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
+            let chunk_x = level.get_i32("xPos").expect("xPos couldn't be parsed");
+            let chunk_z = level.get_i32("zPos").expect("zPos couldn't be parsed");
 
-        for section in chunk_sections.into_iter() {
-            parse_chunk_section(section, &mut blockstate_map, &mut layers);
+            eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
+
+            for section in chunk_sections.into_iter() {
+                parse_chunk_section(section, &mut blockstate_map, &mut layers);
+            }
         }
     }
 
@@ -203,38 +207,35 @@ fn main() {
         .iter()
         .map(|(block_id, count)| (block_id.clone(), *count))
         .collect();
-    blockstate_list.sort_by(|(_, a), (_, b)| a.cmp(b));
+    blockstate_list.sort_by(|(_, a), (_, b)| b.cmp(a));
 
-    for (blockstate, count) in blockstate_list {
-        println!("{:6} {}", count, blockstate);
+    print!("Layer,");
+    for (id, (blockstate, _)) in blockstate_list.iter().enumerate() {
+        print!("{}", blockstate);
+        if id < blockstate_list.len() - 1 {
+            print!(",");
+        }
+    }
+    println!();
+
+    for (y, layer) in layers.iter().enumerate() {
+        print!("{},", y);
+        for (index, (blockstate, _)) in blockstate_list.iter().enumerate() {
+            let layer_count = layer.get(blockstate).unwrap_or(&0);
+            print!("{:8}", layer_count);
+            if index < blockstate_list.len() - 1 {
+                print!(",");
+            }
+        }
+        println!();
     }
 
-    println!("\nDiamonds:");
-
-    for (y, layer) in layers.into_iter().enumerate() {
-        let diamond_count = layer.get("minecraft:diamond_ore").cloned().unwrap_or(0);
-        let deepslate_diamond_count = layer
-            .get("minecraft:deepslate_diamond_ore")
-            .cloned()
-            .unwrap_or(0);
-        let total_diamond_count = diamond_count + deepslate_diamond_count;
-
-        let diamonds_string = format!("{:6}", total_diamond_count);
-
-        println!("{:3} {}", y, diamonds_string);
+    print!("Total,");
+    for (index, (_, total_count)) in blockstate_list.iter().enumerate() {
+        print!("{:8}", total_count);
+        if index < blockstate_list.len() - 1 {
+            print!(",");
+        }
     }
-
-    let diamond_count = blockstate_map
-        .get("minecraft:diamond_ore")
-        .cloned()
-        .unwrap_or(0);
-    let deepslate_diamond_count = blockstate_map
-        .get("minecraft:deepslate_diamond_ore")
-        .cloned()
-        .unwrap_or(0);
-    let total_diamond_count = diamond_count + deepslate_diamond_count;
-
-    let diamonds_string = format!("{:6}", total_diamond_count);
-
-    println!("\ntotal: {}", diamonds_string);
+    println!();
 }
