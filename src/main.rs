@@ -1,6 +1,3 @@
-use std::cmp::max;
-use std::convert::TryInto;
-use std::io::Cursor;
 use std::{collections::HashMap, path::Path};
 
 use anvil_region::position::RegionChunkPosition;
@@ -8,19 +5,17 @@ use anvil_region::{
     position::RegionPosition,
     provider::{FolderRegionProvider, RegionProvider},
 };
-use bitstream_io::{BitRead, BitReader, LittleEndian};
+use chunk::ChunkSection;
 use clap::{App, Arg};
 use nbt::CompoundTag;
+use palette::Palette;
+
+mod chunk;
+mod palette;
 
 type Layer = HashMap<String, u32>;
 
-fn parse_palette_entry(palette_entry: &CompoundTag) -> &str {
-    palette_entry
-        .get_str("Name")
-        .expect("Couldn't get field Name for palette entry")
-}
-
-fn parse_blockstate(block: &str, blockstate_map: &mut HashMap<String, u32>, layer: &mut Layer) {
+fn count_blockstate(block: &str, blockstate_map: &mut HashMap<String, u32>, layer: &mut Layer) {
     let prev_blockstate_count = *blockstate_map.get(&block.to_string()).unwrap_or(&0);
     blockstate_map.insert(block.to_string(), prev_blockstate_count + 1);
 
@@ -28,63 +23,29 @@ fn parse_blockstate(block: &str, blockstate_map: &mut HashMap<String, u32>, laye
     layer.insert(block.to_string(), prev_blockstate_count + 1);
 }
 
-fn get_blocks_in_chunk_by_id<'a>(palette: &[&'a str], blockstates: &[i64]) -> Vec<&'a str> {
-    let palette_length: i32 = palette.len().try_into().unwrap();
-    let width: u32 = max(4, f64::log2(palette_length.into()).ceil() as u32);
-
-    let mut result: Vec<&str> = vec![];
-
-    for blockstate in blockstates {
-        let bytes = blockstate.to_le_bytes();
-        let cursor = Cursor::new(bytes);
-        let mut reader = BitReader::endian(cursor, LittleEndian);
-
-        while let Ok(value) = reader.read::<u64>(width) {
-            if result.len() == 16 * 16 * 16 {
-                return result;
-            }
-
-            let index = value as usize;
-            if index >= palette.len() {
-                panic!(
-                    "Palette index out of bounds: {} (palette size {})",
-                    index,
-                    palette.len()
-                );
-            }
-            result.push(palette[index]);
-        }
-    }
-
-    result
-}
-
 fn iter_blocks_in_section(
-    palette: &[&str],
     chunk_section: &CompoundTag,
     blockstate_map: &mut HashMap<String, u32>,
     section_layers: &mut [Layer],
+    global_palette: &mut Palette,
 ) {
-    let block_states = chunk_section.get_i64_vec("BlockStates");
+    let section = ChunkSection::from_nbt(chunk_section, global_palette);
 
-    if let Ok(block_states) = block_states {
-        let blocks = get_blocks_in_chunk_by_id(palette, block_states);
-
-        for x in 0..16 {
-            for z in 0..16 {
-                for (y, layer) in section_layers.iter_mut().enumerate() {
-                    let block_pos = y * 16 * 16 + z * 16 + x;
-                    parse_blockstate(blocks[block_pos], blockstate_map, layer);
-                }
-            }
-        }
+    for block in section {
+        let blockstate = block.get_state(&global_palette);
+        count_blockstate(
+            blockstate,
+            blockstate_map,
+            &mut section_layers[block.chunk_pos.1],
+        );
     }
 }
 
-fn parse_chunk_section(
+fn count_chunk_section(
     chunk_section: &CompoundTag,
     blockstate_map: &mut HashMap<String, u32>,
     layers: &mut [Layer],
+    global_palette: &mut Palette,
 ) {
     let section_y = chunk_section.get_i8("Y");
 
@@ -107,19 +68,6 @@ fn parse_chunk_section(
 
     let section_layers = &mut layers[section_y_range];
 
-    let mut palette: Vec<&str> = chunk_section
-        .get_compound_tag_vec("Palette")
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entry| parse_palette_entry(entry))
-        .collect();
-
-    if palette.get(0) != Some(&"minecraft:air") {
-        let mut old_palette = palette;
-        palette = vec!["minecraft:air"];
-        palette.append(&mut old_palette);
-    }
-
     let result = chunk_section.get_i64_vec("BlockStates");
 
     if let Err(err) = result {
@@ -130,7 +78,12 @@ fn parse_chunk_section(
             }
         }
     } else {
-        iter_blocks_in_section(&palette, chunk_section, blockstate_map, section_layers);
+        iter_blocks_in_section(
+            chunk_section,
+            blockstate_map,
+            section_layers,
+            global_palette,
+        );
     }
 }
 
@@ -177,6 +130,8 @@ fn main() {
     let mut blockstate_map = HashMap::<String, u32>::new();
     let mut layers = vec![Layer::new(); 256];
 
+    let mut global_palette = Palette::new();
+
     for chunk_x in 0..128 {
         for chunk_z in 0..128 {
             let chunk_pos = RegionChunkPosition::from_chunk_position(chunk_x, chunk_z);
@@ -198,7 +153,12 @@ fn main() {
             eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
 
             for section in chunk_sections.into_iter() {
-                parse_chunk_section(section, &mut blockstate_map, &mut layers);
+                count_chunk_section(
+                    section,
+                    &mut blockstate_map,
+                    &mut layers,
+                    &mut global_palette,
+                );
             }
         }
     }
