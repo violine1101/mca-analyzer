@@ -8,6 +8,7 @@ use crate::palette::Palette;
 pub const CHUNK_SIZE: usize = 16;
 pub struct ChunkSection {
     blocks: [[[usize; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+    pub y: Option<i8>,
 }
 
 impl ChunkSection {
@@ -22,7 +23,9 @@ impl ChunkSection {
             [[[0; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE]
         };
 
-        Self { blocks }
+        let y = nbt.get_i8("Y").ok();
+
+        Self { blocks, y }
     }
 }
 
@@ -88,11 +91,6 @@ fn get_coords_from_array_pos(index: usize) -> (usize, usize, usize) {
     (x, y, z)
 }
 
-pub struct ChunkSectionIterator {
-    chunk_section: ChunkSection,
-    index: usize,
-}
-
 pub struct ChunkSectionBlock {
     global_id: usize,
     pub chunk_pos: (usize, usize, usize),
@@ -109,29 +107,26 @@ impl ChunkSectionBlock {
 impl IntoIterator for ChunkSection {
     type Item = ChunkSectionBlock;
 
-    type IntoIter = ChunkSectionIterator;
+    type IntoIter = std::vec::IntoIter<ChunkSectionBlock>;
 
     fn into_iter(self) -> Self::IntoIter {
-        ChunkSectionIterator {
-            chunk_section: self,
-            index: 0,
-        }
-    }
-}
-
-impl Iterator for ChunkSectionIterator {
-    type Item = ChunkSectionBlock;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE {
-            None
-        } else {
-            let (x, y, z) = get_coords_from_array_pos(self.index);
-            self.index += 1;
-            Some(ChunkSectionBlock {
-                global_id: self.chunk_section.blocks[x][y][z],
-                chunk_pos: (x, y, z),
+        let list: Vec<ChunkSectionBlock> = self
+            .blocks
+            .iter()
+            .enumerate()
+            .flat_map(|(x, x_list)| {
+                x_list.iter().enumerate().flat_map(move |(y, y_list)| {
+                    y_list
+                        .iter()
+                        .enumerate()
+                        .map(move |(z, &block_id)| ChunkSectionBlock {
+                            global_id: block_id,
+                            chunk_pos: (x, y, z),
+                        })
+                })
             })
-        }
+            .collect();
+
+        list.into_iter()
     }
 }

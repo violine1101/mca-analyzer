@@ -5,12 +5,14 @@ use anvil_region::{
     position::RegionPosition,
     provider::{FolderRegionProvider, RegionProvider},
 };
-use chunk::ChunkSection;
+use chunk_section::ChunkSection;
 use clap::{App, Arg};
-use nbt::CompoundTag;
 use palette::Palette;
 
-mod chunk;
+use crate::full_chunk::Chunk;
+
+mod chunk_section;
+mod full_chunk;
 mod palette;
 
 type Layer = HashMap<String, u32>;
@@ -23,43 +25,17 @@ fn count_blockstate(block: &str, blockstate_map: &mut HashMap<String, u32>, laye
     layer.insert(block.to_string(), prev_blockstate_count + 1);
 }
 
-fn iter_blocks_in_section(
-    chunk_section: &CompoundTag,
-    blockstate_map: &mut HashMap<String, u32>,
-    section_layers: &mut [Layer],
-    global_palette: &mut Palette,
-) {
-    let section = ChunkSection::from_nbt(chunk_section, global_palette);
-
-    for block in section {
-        let blockstate = block.get_state(&global_palette);
-        count_blockstate(
-            blockstate,
-            blockstate_map,
-            &mut section_layers[block.chunk_pos.1],
-        );
-    }
-}
-
 fn count_chunk_section(
-    chunk_section: &CompoundTag,
+    chunk_section: ChunkSection,
     blockstate_map: &mut HashMap<String, u32>,
     layers: &mut [Layer],
     global_palette: &mut Palette,
 ) {
-    let section_y = chunk_section.get_i8("Y");
-
-    // This section is empty
-    if section_y.is_err() {
+    let section_y = if let Some(y) = chunk_section.y {
+        y as usize
+    } else {
         return;
-    }
-
-    let section_y = section_y.unwrap();
-    if section_y < 0 {
-        return;
-    }
-
-    let section_y = section_y as usize;
+    };
 
     const SECTION_HEIGHT: usize = 16;
     let section_bottom_layer: usize = section_y * SECTION_HEIGHT;
@@ -68,21 +44,12 @@ fn count_chunk_section(
 
     let section_layers = &mut layers[section_y_range];
 
-    let result = chunk_section.get_i64_vec("BlockStates");
-
-    if let Err(err) = result {
-        match err {
-            nbt::CompoundTagError::TagNotFound { .. } => {}
-            nbt::CompoundTagError::TagWrongType { actual_tag, .. } => {
-                panic!("WRONG TAG TYPE, CORRECT TYPE: {:?}", actual_tag)
-            }
-        }
-    } else {
-        iter_blocks_in_section(
-            chunk_section,
+    for block in chunk_section {
+        let blockstate = block.get_state(&global_palette);
+        count_blockstate(
+            blockstate,
             blockstate_map,
-            section_layers,
-            global_palette,
+            &mut section_layers[block.chunk_pos.1],
         );
     }
 }
@@ -138,21 +105,14 @@ fn main() {
             let mut region = region_provider
                 .get_region(RegionPosition::from_chunk_position(chunk_x, chunk_z))
                 .expect("Could not load chunk file");
-            let chunk = region.read_chunk(chunk_pos).expect("could not read chunk");
 
-            let level = chunk
-                .get_compound_tag("Level")
-                .expect("Level doesn't exist");
-            let chunk_sections = level
-                .get_compound_tag_vec("Sections")
-                .expect("Sections couldn't be parsed");
+            let chunk_nbt = region.read_chunk(chunk_pos).expect("could not read chunk");
 
-            let chunk_x = level.get_i32("xPos").expect("xPos couldn't be parsed");
-            let chunk_z = level.get_i32("zPos").expect("zPos couldn't be parsed");
+            let chunk = Chunk::from_nbt(&chunk_nbt, &mut global_palette);
 
             eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
 
-            for section in chunk_sections.into_iter() {
+            for section in chunk {
                 count_chunk_section(
                     section,
                     &mut blockstate_map,

@@ -21,6 +21,11 @@ impl Palette {
         let mut indices = HashMap::<String, usize>::with_capacity(nbt.len());
         let mut elements = Vec::with_capacity(nbt.len());
 
+        if nbt.is_empty() {
+            indices.insert("minecraft:air".to_string(), 0);
+            elements.push("minecraft:air".to_string());
+        }
+
         nbt.into_iter().enumerate().for_each(|(index, entry)| {
             let blockstate = parse_palette_entry(entry);
 
@@ -28,7 +33,7 @@ impl Palette {
             // even if it's not specified
             if index == 0 && blockstate != "minecraft:air" {
                 indices.insert("minecraft:air".to_string(), 0);
-                elements.push(blockstate.to_string());
+                elements.push("minecraft:air".to_string());
             }
 
             indices.insert(blockstate.to_string(), elements.len());
