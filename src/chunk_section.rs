@@ -8,11 +8,11 @@ use crate::palette::Palette;
 pub const CHUNK_SIZE: usize = 16;
 pub struct ChunkSection {
     blocks: [[[usize; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
-    pub y: Option<i8>,
+    pub y: i8,
 }
 
 impl ChunkSection {
-    pub fn from_nbt(nbt: &CompoundTag, global_palette: &mut Palette) -> Self {
+    pub fn from_nbt(nbt: &CompoundTag, global_palette: &mut Palette) -> Option<Self> {
         // `Palette` nbt tag is implicitly empty if it doesn't exist
         let palette_nbt = nbt.get_compound_tag_vec("Palette").unwrap_or_default();
         let palette = Palette::from_nbt(palette_nbt);
@@ -20,12 +20,12 @@ impl ChunkSection {
         let blocks = if let Ok(block_state_array) = nbt.get_i64_vec("BlockStates") {
             get_blocks_in_chunk(block_state_array, palette, global_palette)
         } else {
-            [[[0; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE]
+            return None;
         };
 
-        let y = nbt.get_i8("Y").ok();
+        let y = nbt.get_i8("Y").ok()?;
 
-        Self { blocks, y }
+        Some(Self { blocks, y })
     }
 }
 
@@ -94,6 +94,7 @@ fn get_coords_from_array_pos(index: usize) -> (usize, usize, usize) {
 pub struct ChunkSectionBlock {
     global_id: usize,
     pub chunk_pos: (usize, usize, usize),
+    pub global_y: i32,
 }
 
 impl ChunkSectionBlock {
@@ -110,6 +111,8 @@ impl IntoIterator for ChunkSection {
     type IntoIter = std::vec::IntoIter<ChunkSectionBlock>;
 
     fn into_iter(self) -> Self::IntoIter {
+        let chunk_bottom_y = self.y as i32 * CHUNK_SIZE as i32;
+
         let list: Vec<ChunkSectionBlock> = self
             .blocks
             .iter()
@@ -122,6 +125,7 @@ impl IntoIterator for ChunkSection {
                         .map(move |(z, &block_id)| ChunkSectionBlock {
                             global_id: block_id,
                             chunk_pos: (x, y, z),
+                            global_y: chunk_bottom_y + (y as i32),
                         })
                 })
             })

@@ -18,23 +18,19 @@ impl Chunk {
             .get_compound_tag_vec("Sections")
             .expect("Sections couldn't be parsed")
             .into_iter()
-            .map(|section_nbt| {
-                let section = ChunkSection::from_nbt(section_nbt, global_palette);
-                (section.y, section)
-            })
-            .filter_map(|section| match section {
-                (None, _) => None,
-                (Some(y), section) => Some((y, section)),
+            .filter_map(|section_nbt| {
+                let section = ChunkSection::from_nbt(section_nbt, global_palette)?;
+                Some((section.y, section))
             })
             .collect();
 
         let x = level.get_i32("xPos").expect("xPos couldn't be parsed");
-        let y = level.get_i32("zPos").expect("zPos couldn't be parsed");
+        let z = level.get_i32("zPos").expect("zPos couldn't be parsed");
 
         Chunk {
             sections: section,
             x,
-            z: y,
+            z,
         }
     }
 }
@@ -50,6 +46,7 @@ impl IntoIterator for Chunk {
 
         let section_list: Vec<ChunkSection> =
             iter_list.into_iter().map(|(_, section)| section).collect();
+
         section_list.into_iter()
     }
 }

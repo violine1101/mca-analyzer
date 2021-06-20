@@ -5,52 +5,40 @@ use anvil_region::{
     position::RegionPosition,
     provider::{FolderRegionProvider, RegionProvider},
 };
-use chunk_section::ChunkSection;
+use chunk_section::{ChunkSection, ChunkSectionBlock};
 use clap::{App, Arg};
+use layers::Layers;
 use palette::Palette;
 
-use crate::full_chunk::Chunk;
+use crate::chunk::Chunk;
 
+mod chunk;
 mod chunk_section;
-mod full_chunk;
+mod layers;
 mod palette;
 
-type Layer = HashMap<String, u32>;
+fn count_blockstate(
+    block: ChunkSectionBlock,
+    blockstate_map: &mut HashMap<String, u32>,
+    layers: &mut Layers,
+    global_palette: &mut Palette,
+) {
+    let blockstate = block.get_state(&global_palette);
 
-fn count_blockstate(block: &str, blockstate_map: &mut HashMap<String, u32>, layer: &mut Layer) {
-    let prev_blockstate_count = *blockstate_map.get(&block.to_string()).unwrap_or(&0);
-    blockstate_map.insert(block.to_string(), prev_blockstate_count + 1);
+    let prev_blockstate_count = *blockstate_map.get(&blockstate.to_string()).unwrap_or(&0);
+    blockstate_map.insert(blockstate.to_string(), prev_blockstate_count + 1);
 
-    let prev_blockstate_count = *layer.get(&block.to_string()).unwrap_or(&0);
-    layer.insert(block.to_string(), prev_blockstate_count + 1);
+    layers.increment(blockstate, block.global_y);
 }
 
 fn count_chunk_section(
     chunk_section: ChunkSection,
     blockstate_map: &mut HashMap<String, u32>,
-    layers: &mut [Layer],
+    layers: &mut Layers,
     global_palette: &mut Palette,
 ) {
-    let section_y = if let Some(y) = chunk_section.y {
-        y as usize
-    } else {
-        return;
-    };
-
-    const SECTION_HEIGHT: usize = 16;
-    let section_bottom_layer: usize = section_y * SECTION_HEIGHT;
-
-    let section_y_range = section_bottom_layer..(section_bottom_layer + SECTION_HEIGHT);
-
-    let section_layers = &mut layers[section_y_range];
-
     for block in chunk_section {
-        let blockstate = block.get_state(&global_palette);
-        count_blockstate(
-            blockstate,
-            blockstate_map,
-            &mut section_layers[block.chunk_pos.1],
-        );
+        count_blockstate(block, blockstate_map, layers, global_palette);
     }
 }
 
@@ -95,7 +83,7 @@ fn main() {
     let region_provider = FolderRegionProvider::new(input_path.to_str().unwrap());
 
     let mut blockstate_map = HashMap::<String, u32>::new();
-    let mut layers = vec![Layer::new(); 256];
+    let mut layers = Layers::new();
 
     let mut global_palette = Palette::new();
 
@@ -138,10 +126,10 @@ fn main() {
     }
     println!();
 
-    for (y, layer) in layers.iter().enumerate() {
-        print!("{},", y);
+    for layer in layers {
+        print!("{:5},", layer.y);
         for (index, (blockstate, _)) in blockstate_list.iter().enumerate() {
-            let layer_count = layer.get(blockstate).unwrap_or(&0);
+            let layer_count = layer.get_count(blockstate);
             print!("{:8}", layer_count);
             if index < blockstate_list.len() - 1 {
                 print!(",");
