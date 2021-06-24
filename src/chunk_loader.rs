@@ -1,4 +1,7 @@
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::{
+    collections::{hash_map::Entry, HashMap, VecDeque},
+    ops::Range,
+};
 
 use anvil_region::{
     position::{RegionChunkPosition, RegionPosition},
@@ -13,14 +16,16 @@ pub struct ChunkLoader<'a> {
     loaded_chunks: HashMap<(i32, i32), Chunk>,
     recently_loaded_chunks: VecDeque<(i32, i32)>,
     region_provider: FolderRegionProvider<'a>,
+    y_range: Option<Range<i8>>,
 }
 
 impl<'a> ChunkLoader<'a> {
-    pub fn new(region_folder: &'a str) -> Self {
+    pub fn new(region_folder: &'a str, y_range: Option<Range<i8>>) -> Self {
         ChunkLoader {
             loaded_chunks: HashMap::new(),
             recently_loaded_chunks: VecDeque::new(),
             region_provider: FolderRegionProvider::new(region_folder),
+            y_range,
         }
     }
 
@@ -60,7 +65,7 @@ impl<'a> ChunkLoader<'a> {
                     .expect("Could not load chunk file");
 
                 let chunk_nbt = region.read_chunk(chunk_pos).expect("could not read chunk");
-                let chunk = Chunk::from_nbt(&chunk_nbt);
+                let chunk = Chunk::from_nbt(&chunk_nbt, &self.y_range);
 
                 entry.insert(chunk)
             }

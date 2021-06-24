@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 
 use nbt::CompoundTag;
 
@@ -12,7 +12,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn from_nbt(nbt: &CompoundTag) -> Self {
+    pub fn from_nbt(nbt: &CompoundTag, sections: &Option<Range<i8>>) -> Self {
         let level = nbt.get_compound_tag("Level").expect("Level doesn't exist");
 
         let x = level.get_i32("xPos").expect("xPos couldn't be parsed");
@@ -24,7 +24,18 @@ impl Chunk {
             .into_iter()
             .filter_map(|section_nbt| {
                 let section = ChunkSection::from_nbt(section_nbt, x, z)?;
-                Some((section.pos.1, section))
+
+                let y = section.pos.1;
+
+                if let Some(y_range) = sections {
+                    if y_range.contains(&y) {
+                        Some((y, section))
+                    } else {
+                        None
+                    }
+                } else {
+                    Some((y, section))
+                }
             })
             .collect();
 

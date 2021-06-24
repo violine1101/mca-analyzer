@@ -18,7 +18,7 @@ impl<'a> CompositionAnalyzer<'a> {
         CompositionAnalyzer {
             blockstate_map: HashMap::new(),
             layers: Layers::new(),
-            chunk_loader: ChunkLoader::new(path),
+            chunk_loader: ChunkLoader::new(path, None),
         }
     }
 

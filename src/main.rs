@@ -2,6 +2,7 @@ use std::path::Path;
 
 use clap::{App, Arg};
 use composition_analyzer::CompositionAnalyzer;
+use diamond_vein_analyzer::DiamondVeinAnalyzer;
 
 use crate::area::Area;
 
@@ -10,6 +11,7 @@ mod chunk;
 mod chunk_loader;
 mod chunk_section;
 mod composition_analyzer;
+mod diamond_vein_analyzer;
 mod layers;
 mod palette;
 
@@ -45,17 +47,27 @@ fn main() {
         return;
     };
 
-    let _output_path = if let Some(output_file) = matches.value_of("output") {
+    let output_path = if let Some(output_file) = matches.value_of("output") {
         Some(Path::new(output_file))
     } else {
         None
     };
 
-    let mut composition_analyzer =
-        CompositionAnalyzer::new(input_path.as_os_str().to_str().unwrap());
+    if let Some(path) = output_path {
+        let area = Area::new(0, 256, 0, 256);
+        let mut diamond_vein_analyzer =
+            DiamondVeinAnalyzer::new(input_path.as_os_str().to_str().unwrap(), area);
 
-    let area = Area::new(0, 256, 0, 256);
-    composition_analyzer.analyze(area);
+        diamond_vein_analyzer.analyze();
+        diamond_vein_analyzer.print_csv();
+        diamond_vein_analyzer.print_img(path.as_os_str().to_str().unwrap());
+    } else {
+        let mut composition_analyzer =
+            CompositionAnalyzer::new(input_path.as_os_str().to_str().unwrap());
 
-    composition_analyzer.print_csv();
+        let area = Area::new(0, 256, 0, 256);
+        composition_analyzer.analyze(area);
+
+        composition_analyzer.print_csv();
+    }
 }
