@@ -8,7 +8,6 @@ use anvil_region::{
 use chunk_section::{ChunkSection, ChunkSectionBlock};
 use clap::{App, Arg};
 use layers::Layers;
-use palette::Palette;
 
 use crate::area::Area;
 use crate::chunk::Chunk;
@@ -23,24 +22,22 @@ fn count_blockstate(
     block: ChunkSectionBlock,
     blockstate_map: &mut HashMap<String, u32>,
     layers: &mut Layers,
-    global_palette: &mut Palette,
 ) {
-    let blockstate = block.get_state(&global_palette);
+    let blockstate = block.blockstate;
 
-    let prev_blockstate_count = *blockstate_map.get(&blockstate.to_string()).unwrap_or(&0);
-    blockstate_map.insert(blockstate.to_string(), prev_blockstate_count + 1);
+    let prev_blockstate_count = *blockstate_map.get(&blockstate).unwrap_or(&0);
+    blockstate_map.insert(blockstate.clone(), prev_blockstate_count + 1);
 
-    layers.increment(blockstate, block.global_y);
+    layers.increment(blockstate.as_str(), block.global_pos.1);
 }
 
 fn count_chunk_section(
     chunk_section: ChunkSection,
     blockstate_map: &mut HashMap<String, u32>,
     layers: &mut Layers,
-    global_palette: &mut Palette,
 ) {
     for block in chunk_section {
-        count_blockstate(block, blockstate_map, layers, global_palette);
+        count_blockstate(block, blockstate_map, layers);
     }
 }
 
@@ -87,8 +84,6 @@ fn main() {
     let mut blockstate_map = HashMap::<String, u32>::new();
     let mut layers = Layers::new();
 
-    let mut global_palette = Palette::new();
-
     let area = Area::new(0, 256, 0, 256);
 
     for (chunk_x, chunk_z) in area {
@@ -99,17 +94,12 @@ fn main() {
 
         let chunk_nbt = region.read_chunk(chunk_pos).expect("could not read chunk");
 
-        let chunk = Chunk::from_nbt(&chunk_nbt, &mut global_palette);
+        let chunk = Chunk::from_nbt(&chunk_nbt);
 
         eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
 
         for section in chunk {
-            count_chunk_section(
-                section,
-                &mut blockstate_map,
-                &mut layers,
-                &mut global_palette,
-            );
+            count_chunk_section(section, &mut blockstate_map, &mut layers);
         }
     }
 

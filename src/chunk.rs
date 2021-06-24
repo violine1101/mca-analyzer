@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use nbt::CompoundTag;
 
-use crate::{chunk_section::ChunkSection, palette::Palette};
+use crate::chunk_section::ChunkSection;
 
 pub struct Chunk {
     sections: HashMap<i8, ChunkSection>,
@@ -11,27 +11,23 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn from_nbt(nbt: &CompoundTag, global_palette: &mut Palette) -> Self {
+    pub fn from_nbt(nbt: &CompoundTag) -> Self {
         let level = nbt.get_compound_tag("Level").expect("Level doesn't exist");
-
-        let section = level
-            .get_compound_tag_vec("Sections")
-            .expect("Sections couldn't be parsed")
-            .into_iter()
-            .filter_map(|section_nbt| {
-                let section = ChunkSection::from_nbt(section_nbt, global_palette)?;
-                Some((section.y, section))
-            })
-            .collect();
 
         let x = level.get_i32("xPos").expect("xPos couldn't be parsed");
         let z = level.get_i32("zPos").expect("zPos couldn't be parsed");
 
-        Chunk {
-            sections: section,
-            x,
-            z,
-        }
+        let sections = level
+            .get_compound_tag_vec("Sections")
+            .expect("Sections couldn't be parsed")
+            .into_iter()
+            .filter_map(|section_nbt| {
+                let section = ChunkSection::from_nbt(section_nbt, x, z)?;
+                Some((section.pos.1, section))
+            })
+            .collect();
+
+        Chunk { sections, x, z }
     }
 }
 

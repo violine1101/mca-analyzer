@@ -6,51 +6,70 @@ use nbt::CompoundTag;
 use crate::palette::Palette;
 
 pub const CHUNK_SIZE: usize = 16;
+
+struct BlocksArray {
+    pub contents: [usize; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+}
+
+const EMPTY_BLOCKS_ARRAY: BlocksArray = BlocksArray {
+    contents: [0; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+};
+
+impl BlocksArray {
+    pub fn get(&self, x: usize, y: usize, z: usize) -> usize {
+        let pos = y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
+        self.contents[pos]
+    }
+}
+
 pub struct ChunkSection {
-    blocks: [[[usize; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
-    pub y: i8,
+    blocks: BlocksArray,
+    pub pos: (i32, i8, i32),
+    palette: Palette,
 }
 
 impl ChunkSection {
-    pub fn from_nbt(nbt: &CompoundTag, global_palette: &mut Palette) -> Option<Self> {
+    pub fn from_nbt(nbt: &CompoundTag, x: i32, z: i32) -> Option<Self> {
         // `Palette` nbt tag is implicitly empty if it doesn't exist
         let palette_nbt = nbt.get_compound_tag_vec("Palette").unwrap_or_default();
         let palette = Palette::from_nbt(palette_nbt);
 
         let blocks = if let Ok(block_state_array) = nbt.get_i64_vec("BlockStates") {
-            get_blocks_in_chunk(block_state_array, palette, global_palette)
+            get_blocks_in_chunk(block_state_array, &palette)
         } else {
             return None;
         };
 
         let y = nbt.get_i8("Y").ok()?;
 
-        Some(Self { blocks, y })
+        Some(Self {
+            blocks,
+            pos: (x, y, z),
+            palette,
+        })
+    }
+
+    pub fn get_block_at(&self, x: usize, y: usize, z: usize) -> Option<&str> {
+        assert!(x < CHUNK_SIZE);
+        assert!(y < CHUNK_SIZE);
+        assert!(z < CHUNK_SIZE);
+
+        let block_id = self.blocks.get(x, y, z);
+        self.palette.get_state(block_id)
     }
 }
 
-fn get_blocks_in_chunk(
-    block_state_array: &[i64],
-    chunk_section_palette: Palette,
-    global_palette: &mut Palette,
-) -> [[[usize; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE] {
-    let mut result = [[[0; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+fn get_blocks_in_chunk(block_state_array: &[i64], chunk_section_palette: &Palette) -> BlocksArray {
+    let mut result = EMPTY_BLOCKS_ARRAY;
 
     let chunk_section_ids = get_block_ids_in_chunk(block_state_array, &chunk_section_palette);
 
-    for (index, chunk_section_val) in chunk_section_ids.into_iter().enumerate() {
+    for (index, chunk_section_id) in chunk_section_ids.into_iter().enumerate() {
         if index >= CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE {
             break;
         }
 
-        let chunk_section_id = chunk_section_val;
-        let blockstate = chunk_section_palette
-            .get_state(chunk_section_id)
-            .expect("Chunk section palette index out of bounds");
-        let global_id = global_palette.add(blockstate);
-
-        let (x, y, z) = get_coords_from_array_pos(index);
-        result[x][y][z] = global_id;
+        result.contents[index] = chunk_section_id;
     }
 
     result
@@ -92,17 +111,9 @@ fn get_coords_from_array_pos(index: usize) -> (usize, usize, usize) {
 }
 
 pub struct ChunkSectionBlock {
-    global_id: usize,
     pub chunk_pos: (usize, usize, usize),
-    pub global_y: i32,
-}
-
-impl ChunkSectionBlock {
-    pub fn get_state<'a>(&self, global_palette: &'a Palette) -> &'a str {
-        global_palette
-            .get_state(self.global_id)
-            .expect("Global palette is missing an entry")
-    }
+    pub global_pos: (i64, i32, i64),
+    pub blockstate: String,
 }
 
 impl IntoIterator for ChunkSection {
@@ -111,23 +122,33 @@ impl IntoIterator for ChunkSection {
     type IntoIter = std::vec::IntoIter<ChunkSectionBlock>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let chunk_bottom_y = self.y as i32 * CHUNK_SIZE as i32;
+        let chunk_start = (
+            self.pos.0 as i64 * CHUNK_SIZE as i64,
+            self.pos.1 as i32 * CHUNK_SIZE as i32,
+            self.pos.2 as i64 * CHUNK_SIZE as i64,
+        );
+        let palette = self.palette;
 
         let list: Vec<ChunkSectionBlock> = self
             .blocks
+            .contents
             .iter()
             .enumerate()
-            .flat_map(|(x, x_list)| {
-                x_list.iter().enumerate().flat_map(move |(y, y_list)| {
-                    y_list
-                        .iter()
-                        .enumerate()
-                        .map(move |(z, &block_id)| ChunkSectionBlock {
-                            global_id: block_id,
-                            chunk_pos: (x, y, z),
-                            global_y: chunk_bottom_y + (y as i32),
-                        })
-                })
+            .map(|(index, id)| {
+                let chunk_pos = get_coords_from_array_pos(index);
+
+                ChunkSectionBlock {
+                    chunk_pos,
+                    global_pos: (
+                        chunk_start.0 + chunk_pos.0 as i64,
+                        chunk_start.1 + chunk_pos.1 as i32,
+                        chunk_start.2 + chunk_pos.2 as i64,
+                    ),
+                    blockstate: palette
+                        .get_state(*id)
+                        .expect("Blockstate is not in palette")
+                        .to_string(),
+                }
             })
             .collect();
 
