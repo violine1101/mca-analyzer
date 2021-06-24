@@ -10,8 +10,10 @@ use clap::{App, Arg};
 use layers::Layers;
 use palette::Palette;
 
+use crate::area::Area;
 use crate::chunk::Chunk;
 
+mod area;
 mod chunk;
 mod chunk_section;
 mod layers;
@@ -87,27 +89,27 @@ fn main() {
 
     let mut global_palette = Palette::new();
 
-    for chunk_x in 0..128 {
-        for chunk_z in 0..128 {
-            let chunk_pos = RegionChunkPosition::from_chunk_position(chunk_x, chunk_z);
-            let mut region = region_provider
-                .get_region(RegionPosition::from_chunk_position(chunk_x, chunk_z))
-                .expect("Could not load chunk file");
+    let area = Area::new(0, 256, 0, 256);
 
-            let chunk_nbt = region.read_chunk(chunk_pos).expect("could not read chunk");
+    for (chunk_x, chunk_z) in area {
+        let chunk_pos = RegionChunkPosition::from_chunk_position(chunk_x, chunk_z);
+        let mut region = region_provider
+            .get_region(RegionPosition::from_chunk_position(chunk_x, chunk_z))
+            .expect("Could not load chunk file");
 
-            let chunk = Chunk::from_nbt(&chunk_nbt, &mut global_palette);
+        let chunk_nbt = region.read_chunk(chunk_pos).expect("could not read chunk");
 
-            eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
+        let chunk = Chunk::from_nbt(&chunk_nbt, &mut global_palette);
 
-            for section in chunk {
-                count_chunk_section(
-                    section,
-                    &mut blockstate_map,
-                    &mut layers,
-                    &mut global_palette,
-                );
-            }
+        eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
+
+        for section in chunk {
+            count_chunk_section(
+                section,
+                &mut blockstate_map,
+                &mut layers,
+                &mut global_palette,
+            );
         }
     }
 
