@@ -14,6 +14,7 @@ use crate::chunk::Chunk;
 
 mod area;
 mod chunk;
+mod chunk_loader;
 mod chunk_section;
 mod layers;
 mod palette;

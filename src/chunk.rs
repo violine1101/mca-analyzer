@@ -29,6 +29,10 @@ impl Chunk {
 
         Chunk { sections, x, z }
     }
+
+    pub fn get_section(&self, y: i8) -> Option<&ChunkSection> {
+        self.sections.get(&y)
+    }
 }
 
 impl IntoIterator for Chunk {
