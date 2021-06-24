@@ -4,6 +4,7 @@ use nbt::CompoundTag;
 
 use crate::chunk_section::ChunkSection;
 
+#[derive(Debug, Clone)]
 pub struct Chunk {
     sections: HashMap<i8, ChunkSection>,
     pub x: i32,

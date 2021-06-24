@@ -2,6 +2,7 @@ use std::{cmp::max, convert::TryInto};
 
 use nbt::CompoundTag;
 
+#[derive(Debug, Clone)]
 pub struct Palette {
     elements: Vec<String>,
 }

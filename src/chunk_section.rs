@@ -7,6 +7,7 @@ use crate::palette::Palette;
 
 pub const CHUNK_SIZE: usize = 16;
 
+#[derive(Debug, Clone, Copy)]
 struct BlocksArray {
     pub contents: [usize; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
 }
@@ -22,6 +23,7 @@ impl BlocksArray {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ChunkSection {
     blocks: BlocksArray,
     pub pos: (i32, i8, i32),

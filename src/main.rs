@@ -1,46 +1,17 @@
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
-use anvil_region::position::RegionChunkPosition;
-use anvil_region::{
-    position::RegionPosition,
-    provider::{FolderRegionProvider, RegionProvider},
-};
-use chunk_section::{ChunkSection, ChunkSectionBlock};
 use clap::{App, Arg};
-use layers::Layers;
+use composition_analyzer::CompositionAnalyzer;
 
 use crate::area::Area;
-use crate::chunk::Chunk;
 
 mod area;
 mod chunk;
 mod chunk_loader;
 mod chunk_section;
+mod composition_analyzer;
 mod layers;
 mod palette;
-
-fn count_blockstate(
-    block: ChunkSectionBlock,
-    blockstate_map: &mut HashMap<String, u32>,
-    layers: &mut Layers,
-) {
-    let blockstate = block.blockstate;
-
-    let prev_blockstate_count = *blockstate_map.get(&blockstate).unwrap_or(&0);
-    blockstate_map.insert(blockstate.clone(), prev_blockstate_count + 1);
-
-    layers.increment(blockstate.as_str(), block.global_pos.1);
-}
-
-fn count_chunk_section(
-    chunk_section: ChunkSection,
-    blockstate_map: &mut HashMap<String, u32>,
-    layers: &mut Layers,
-) {
-    for block in chunk_section {
-        count_blockstate(block, blockstate_map, layers);
-    }
-}
 
 fn main() {
     let matches = App::new("mca-analyzer")
@@ -80,63 +51,11 @@ fn main() {
         None
     };
 
-    let region_provider = FolderRegionProvider::new(input_path.to_str().unwrap());
-
-    let mut blockstate_map = HashMap::<String, u32>::new();
-    let mut layers = Layers::new();
+    let mut composition_analyzer =
+        CompositionAnalyzer::new(input_path.as_os_str().to_str().unwrap());
 
     let area = Area::new(0, 256, 0, 256);
+    composition_analyzer.analyze(area);
 
-    for (chunk_x, chunk_z) in area {
-        let chunk_pos = RegionChunkPosition::from_chunk_position(chunk_x, chunk_z);
-        let mut region = region_provider
-            .get_region(RegionPosition::from_chunk_position(chunk_x, chunk_z))
-            .expect("Could not load chunk file");
-
-        let chunk_nbt = region.read_chunk(chunk_pos).expect("could not read chunk");
-
-        let chunk = Chunk::from_nbt(&chunk_nbt);
-
-        eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
-
-        for section in chunk {
-            count_chunk_section(section, &mut blockstate_map, &mut layers);
-        }
-    }
-
-    let mut blockstate_list: Vec<(String, u32)> = blockstate_map
-        .iter()
-        .map(|(block_id, count)| (block_id.clone(), *count))
-        .collect();
-    blockstate_list.sort_by(|(_, a), (_, b)| b.cmp(a));
-
-    print!("Layer,");
-    for (id, (blockstate, _)) in blockstate_list.iter().enumerate() {
-        print!("{}", blockstate);
-        if id < blockstate_list.len() - 1 {
-            print!(",");
-        }
-    }
-    println!();
-
-    for layer in layers {
-        print!("{:5},", layer.y);
-        for (index, (blockstate, _)) in blockstate_list.iter().enumerate() {
-            let layer_count = layer.get_count(blockstate);
-            print!("{:8}", layer_count);
-            if index < blockstate_list.len() - 1 {
-                print!(",");
-            }
-        }
-        println!();
-    }
-
-    print!("Total,");
-    for (index, (_, total_count)) in blockstate_list.iter().enumerate() {
-        print!("{:8}", total_count);
-        if index < blockstate_list.len() - 1 {
-            print!(",");
-        }
-    }
-    println!();
+    composition_analyzer.print_csv();
 }
