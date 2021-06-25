@@ -36,8 +36,9 @@ impl<'a> ChunkLoader<'a> {
             .position(|&el| el == coordinate)
         {
             self.recently_loaded_chunks.remove(index);
-            self.recently_loaded_chunks.push_back(coordinate);
         }
+
+        self.recently_loaded_chunks.push_back(coordinate);
     }
 
     fn unload_chunks(&mut self) {

@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use crate::chunk_section::CHUNK_SIZE;
-
 #[derive(Debug, Clone, Copy)]
 pub struct Area {
     x_range: (i32, i32),
@@ -23,14 +21,21 @@ impl Area {
         }
     }
 
-    pub fn block_width_x(&self) -> u32 {
-        let area = self.to_vis_coords();
-        area.x_range.1 as u32 * CHUNK_SIZE as u32
+    pub fn get_positive_coords(&self, x: i32, z: i32) -> (u32, u32) {
+        (
+            x as u32 - self.x_range.0 as u32,
+            z as u32 - self.z_range.0 as u32,
+        )
     }
 
-    pub fn block_width_z(&self) -> u32 {
+    pub fn chunk_width_x(&self) -> u32 {
         let area = self.to_vis_coords();
-        area.z_range.1 as u32 * CHUNK_SIZE as u32
+        area.x_range.1 as u32
+    }
+
+    pub fn chunk_width_z(&self) -> u32 {
+        let area = self.to_vis_coords();
+        area.z_range.1 as u32
     }
 }
 

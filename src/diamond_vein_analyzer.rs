@@ -1,10 +1,6 @@
-use std::{
-    cmp::min,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use image::{ImageBuffer, Rgb, RgbImage};
-use itertools::Itertools;
 
 use crate::{area::Area, chunk::Chunk, chunk_loader::ChunkLoader};
 
@@ -25,11 +21,16 @@ pub struct DiamondVeinAnalyzer<'a> {
 
     found_veins: HashSet<(i64, i32, i64)>,
 
-    /// (size, height) -> count
-    vein_sizes: HashMap<(u8, i16), u32>,
+    /// size -> count
+    vein_count_by_size: HashMap<u8, u32>,
+
+    /// height -> count
+    vein_count_by_height: HashMap<i16, u32>,
 
     /// diamond count -> # chunks with that diamond count
     diamonds_per_chunk: HashMap<u8, u32>,
+
+    diamond_img: RgbImage,
 
     area: Area,
 }
@@ -38,20 +39,46 @@ impl<'a> DiamondVeinAnalyzer<'a> {
     pub fn new(path: &'a str, area: Area) -> Self {
         let chunk_loader = ChunkLoader::new(path, Some(0..4));
 
+        let diamond_img: RgbImage = ImageBuffer::from_pixel(
+            area.chunk_width_x(),
+            area.chunk_width_z(),
+            Rgb([255, 255, 255]),
+        );
+
         DiamondVeinAnalyzer {
             chunk_loader,
             found_veins: HashSet::new(),
-            vein_sizes: HashMap::new(),
+            vein_count_by_size: HashMap::new(),
+            vein_count_by_height: HashMap::new(),
             diamonds_per_chunk: HashMap::new(),
+            diamond_img,
             area,
         }
+    }
+
+    pub fn clean_found_veins(&mut self, (x, z): (i64, i64)) {
+        self.found_veins = self
+            .found_veins
+            .iter()
+            .filter(|&(lx, _, lz)| *lx < x && *lz < z)
+            .cloned()
+            .collect();
     }
 
     pub fn analyze(&mut self) {
         for (chunk_x, chunk_z) in self.area {
             let chunk = self.chunk_loader.get_or_load(chunk_x, chunk_z).clone();
+            let chunk_pos = chunk.get_global_pos();
 
-            eprintln!("Analyzing chunk ({},{})", chunk_x, chunk_z);
+            eprintln!(
+                "Analyzing chunk ({},{}). [fv {}, cs {}, ch {}, dc {}]",
+                chunk_x,
+                chunk_z,
+                self.found_veins.len(),
+                self.vein_count_by_size.len(),
+                self.vein_count_by_height.len(),
+                self.diamonds_per_chunk.len(),
+            );
 
             let diamonds_in_chunk = self.analyze_chunk(chunk);
 
@@ -61,6 +88,10 @@ impl<'a> DiamondVeinAnalyzer<'a> {
                 .or_insert(0);
 
             *chunks_with_this_many_diamonds += 1;
+
+            self.update_img(chunk_x, chunk_z, diamonds_in_chunk);
+
+            self.clean_found_veins(chunk_pos);
         }
     }
 
@@ -79,14 +110,19 @@ impl<'a> DiamondVeinAnalyzer<'a> {
                     };
 
                     if let Some(vein) = self.explore_vein(vein, x, y, z) {
-                        self.found_veins.insert(vein.location);
+                        vein.blocks.iter().for_each(|&pos| {
+                            self.found_veins.insert(pos);
+                        });
 
-                        let count = self
-                            .vein_sizes
-                            .entry((vein.blocks.len() as u8, vein.location.1 as i16))
-                            .or_insert(0);
+                        *self
+                            .vein_count_by_size
+                            .entry(vein.blocks.len() as u8)
+                            .or_insert(0) += 1;
 
-                        *count += 1;
+                        *self
+                            .vein_count_by_height
+                            .entry(vein.location.1 as i16)
+                            .or_insert(0) += 1;
                     }
 
                     diamond_count += 1;
@@ -132,7 +168,7 @@ impl<'a> DiamondVeinAnalyzer<'a> {
         eprintln!("Printing number of diamonds / chunk");
 
         println!("Number of diamonds,Chunks");
-        let mut diamonds_per_chunk: Vec<_> = self.diamonds_per_chunk.iter().collect();
+        let mut diamonds_per_chunk: Vec<(&u8, &u32)> = self.diamonds_per_chunk.iter().collect();
         diamonds_per_chunk.sort_unstable();
 
         for (diamonds, chunks) in diamonds_per_chunk {
@@ -140,83 +176,48 @@ impl<'a> DiamondVeinAnalyzer<'a> {
         }
         println!();
 
-        eprintln!("Preparing to print diamond vein table...");
+        eprintln!("Preparing to print diamond vein tables...");
 
-        let mut sizes: Vec<u8> = self
-            .vein_sizes
-            .keys()
-            .map(|(vein_size, _height)| *vein_size)
-            .collect();
+        let mut sizes: Vec<(&u8, &u32)> = self.vein_count_by_size.iter().collect();
         sizes.sort_unstable();
         sizes.dedup();
 
-        let mut heights: Vec<i16> = self
-            .vein_sizes
-            .keys()
-            .map(|(_vein_size, height)| *height)
-            .collect();
+        let mut heights: Vec<(&i16, &u32)> = self.vein_count_by_height.iter().collect();
         heights.sort_unstable();
         heights.dedup();
 
-        eprintln!("Printing diamond vein table...");
+        eprintln!("Printing diamond vein size table...");
 
-        print!("Veins");
-        for size in sizes.iter() {
-            print!(",{:8}", size)
+        println!("Vein Size,Vein Count");
+        for (size, count) in sizes {
+            println!("{:8},{:8}", size, count)
         }
         println!();
 
-        for height in heights {
-            print!("{:5}", height);
+        eprintln!("Printing diamond vein height table...");
 
-            for &size in sizes.iter() {
-                let value = self.vein_sizes.get(&(size, height)).cloned().unwrap_or(0);
-                print!(",{:8}", value);
-            }
-
-            println!();
+        println!("Vein Height,Vein Count");
+        for (height, count) in heights {
+            println!("{:8},{:8}", height, count);
         }
 
         eprintln!("Done printing CSV!");
     }
 
+    pub fn update_img(&mut self, chunk_x: i32, chunk_z: i32, diamond_count: u8) {
+        let (x, y) = self.area.get_positive_coords(chunk_x, chunk_z);
+        let y = self.area.chunk_width_z() - y - 1;
+
+        let brightness = 255u32.saturating_sub(diamond_count as u32 * 16) as u8;
+        let pixel = Rgb([0, 0, brightness]);
+
+        self.diamond_img.put_pixel(x, y, pixel);
+    }
+
     pub fn print_img(&self, path: &str) {
-        eprintln!("Preparing to print image...");
-
-        let img_area = self.area.to_vis_coords();
-
-        let canvas_width = img_area.block_width_x();
-        let canvas_height = img_area.block_width_z();
-
-        let mut veins: Vec<(u32, u32)> = self
-            .found_veins
-            .iter()
-            .map(|(x, _y, z)| (*x as u32, *z as u32))
-            .collect();
-        veins.sort_unstable();
-
-        let veins: HashMap<(u32, u32), usize> = veins
-            .into_iter()
-            .dedup_with_count()
-            .map(|(count, (x, z))| ((x, z), count))
-            .collect();
-
-        eprintln!("Printing image...");
-
-        let img: RgbImage = ImageBuffer::from_fn(canvas_width, canvas_height, |x, y| {
-            let y = canvas_height - y - 1;
-
-            if let Some(&count) = veins.get(&(x, y)) {
-                let brightness = min(count as u8 * 32, 127);
-                Rgb([0, 0, brightness])
-            } else {
-                Rgb([255, 255, 255])
-            }
-        });
-
         eprintln!("Saving image...");
 
-        img.save(path).unwrap();
+        self.diamond_img.save(path).unwrap();
 
         eprintln!("Done printing image!");
     }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::Range};
 
 use nbt::CompoundTag;
 
-use crate::chunk_section::ChunkSection;
+use crate::chunk_section::{ChunkSection, CHUNK_SIZE};
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -44,6 +44,13 @@ impl Chunk {
 
     pub fn get_section(&self, y: i8) -> Option<&ChunkSection> {
         self.sections.get(&y)
+    }
+
+    pub fn get_global_pos(&self) -> (i64, i64) {
+        (
+            self.x as i64 * CHUNK_SIZE as i64,
+            self.z as i64 * CHUNK_SIZE as i64,
+        )
     }
 }
 

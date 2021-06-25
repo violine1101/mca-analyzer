@@ -25,6 +25,8 @@ impl Palette {
             if index == 0 && blockstate != "minecraft:air" {
                 elements.push("minecraft:air".to_string());
             }
+
+            elements.push(blockstate.to_string());
         });
 
         Palette { elements }
